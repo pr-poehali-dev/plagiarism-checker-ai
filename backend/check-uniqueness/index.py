@@ -121,13 +121,22 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         ai_response = response.json()
         content = ai_response['choices'][0]['message']['content']
         
-        json_match = re.search(r'\{[\s\S]*\}', content)
-        if json_match:
-            ai_data = json.loads(json_match.group())
-        else:
+        json_matches = re.findall(r'\{[^\{\}]*(?:\{[^\{\}]*\}[^\{\}]*)*\}', content)
+        
+        ai_data = None
+        for match_str in json_matches:
+            try:
+                parsed = json.loads(match_str)
+                if 'uniqueness_score' in parsed:
+                    ai_data = parsed
+                    break
+            except json.JSONDecodeError:
+                continue
+        
+        if not ai_data:
             ai_data = {
-                'uniqueness_score': 85,
-                'analysis': content[:500],
+                'uniqueness_score': 50,
+                'analysis': 'ИИ не смог определить точный процент уникальности. Рекомендуется повторная проверка.',
                 'potential_matches': []
             }
         

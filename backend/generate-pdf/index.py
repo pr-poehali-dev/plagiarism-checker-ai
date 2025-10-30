@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 import base64
 from io import BytesIO
+import unicodedata
 
 class Match(BaseModel):
     source: str
@@ -52,138 +53,151 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         body_data = json.loads(event.get('body', '{}'))
         req = PDFRequest(**body_data)
         
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import cm
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-        from reportlab.lib import colors
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        def transliterate(text: str) -> str:
+            translit_map = {
+                'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo', 'ж': 'zh',
+                'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o',
+                'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts',
+                'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+                'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'Yo', 'Ж': 'Zh',
+                'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M', 'Н': 'N', 'О': 'O',
+                'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U', 'Ф': 'F', 'Х': 'H', 'Ц': 'Ts',
+                'Ч': 'Ch', 'Ш': 'Sh', 'Щ': 'Sch', 'Ъ': '', 'Ы': 'Y', 'Ь': '', 'Э': 'E', 'Ю': 'Yu', 'Я': 'Ya'
+            }
+            return ''.join(translit_map.get(c, c) for c in text)
+        
+        from fpdf import FPDF
+        
+        class PDF(FPDF):
+            def __init__(self):
+                super().__init__()
+                self.font_name = 'Arial'
+            
+            def header(self):
+                self.set_font(self.font_name, 'B', 16)
+                self.set_text_color(124, 58, 237)
+                self.cell(0, 10, 'PlagiatAI - Otchet o proverke unikalnosti', 0, 1, 'C')
+                self.ln(5)
+            
+            def footer(self):
+                self.set_y(-15)
+                self.set_font(self.font_name, '', 8)
+                self.set_text_color(128, 128, 128)
+                self.cell(0, 10, f'Stranica {self.page_no()}', 0, 0, 'C')
+        
+        pdf = PDF()
+        pdf.add_page()
         
         try:
-            pdfmetrics.registerFont(TTFont('DejaVuSans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
-            pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
+            pdf.add_font('DejaVu', '', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
+            pdf.add_font('DejaVu', 'B', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
+            font_name = 'DejaVu'
+            pdf.font_name = 'DejaVu'
         except:
-            pass
+            font_name = 'Arial'
+            pdf.font_name = 'Arial'
         
-        buffer = BytesIO()
+        pdf.set_font(font_name, '', 10)
+        pdf.set_text_color(100, 100, 100)
+        pdf.cell(0, 10, transliterate(f'Дата проверки: {datetime.now().strftime("%d.%m.%Y %H:%M")}'), 0, 1)
+        pdf.ln(10)
         
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=A4,
-            rightMargin=2*cm,
-            leftMargin=2*cm,
-            topMargin=2*cm,
-            bottomMargin=2*cm
-        )
+        pdf.set_font(font_name, 'B', 14)
+        pdf.set_text_color(124, 58, 237)
+        pdf.cell(0, 10, transliterate('Результаты анализа'), 0, 1)
+        pdf.ln(5)
         
-        story = []
+        uniqueness_color = (34, 197, 94) if req.uniqueness >= 80 else ((251, 146, 60) if req.uniqueness >= 60 else (239, 68, 68))
         
-        styles = getSampleStyleSheet()
+        pdf.set_font(font_name, 'B', 48)
+        pdf.set_text_color(*uniqueness_color)
+        pdf.cell(0, 20, f'{req.uniqueness:.1f}%', 0, 1, 'C')
+        pdf.set_font(font_name, '', 12)
+        pdf.set_text_color(100, 100, 100)
+        pdf.cell(0, 10, transliterate('Уникальность текста'), 0, 1, 'C')
+        pdf.ln(10)
         
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=24,
-            textColor=colors.HexColor('#7C3AED'),
-            spaceAfter=30,
-            alignment=TA_CENTER,
-            fontName='DejaVuSans-Bold' if 'DejaVuSans-Bold' in pdfmetrics.getRegisteredFontNames() else 'Helvetica-Bold'
-        )
+        pdf.set_fill_color(240, 240, 245)
+        pdf.set_font(font_name, 'B', 11)
+        pdf.set_text_color(50, 50, 50)
         
-        heading_style = ParagraphStyle(
-            'CustomHeading',
-            parent=styles['Heading2'],
-            fontSize=16,
-            textColor=colors.HexColor('#7C3AED'),
-            spaceAfter=12,
-            spaceBefore=12,
-            fontName='DejaVuSans-Bold' if 'DejaVuSans-Bold' in pdfmetrics.getRegisteredFontNames() else 'Helvetica-Bold'
-        )
-        
-        normal_style = ParagraphStyle(
-            'CustomNormal',
-            parent=styles['Normal'],
-            fontSize=11,
-            spaceAfter=12,
-            fontName='DejaVuSans' if 'DejaVuSans' in pdfmetrics.getRegisteredFontNames() else 'Helvetica'
-        )
-        
-        story.append(Paragraph('Отчет о проверке уникальности текста', title_style))
-        story.append(Paragraph(f'PlagiatAI - {datetime.now().strftime("%d.%m.%Y %H:%M")}', normal_style))
-        story.append(Spacer(1, 20))
-        
-        uniqueness_color = colors.green if req.uniqueness >= 80 else (colors.orange if req.uniqueness >= 60 else colors.red)
-        
-        summary_data = [
-            ['Показатель', 'Значение'],
-            ['Уникальность', f'{req.uniqueness:.1f}%'],
-            ['Слов', str(req.words)],
-            ['Символов', str(req.characters)],
-            ['Совпадений найдено', str(len(req.matches))]
+        stats = [
+            (transliterate('Количество слов:'), str(req.words)),
+            (transliterate('Количество символов:'), str(req.characters)),
+            (transliterate('Найдено совпадений:'), str(len(req.matches)))
         ]
         
-        summary_table = Table(summary_data, colWidths=[8*cm, 8*cm])
-        summary_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#7C3AED')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'DejaVuSans-Bold' if 'DejaVuSans-Bold' in pdfmetrics.getRegisteredFontNames() else 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.grey),
-            ('FONTNAME', (0, 1), (-1, -1), 'DejaVuSans' if 'DejaVuSans' in pdfmetrics.getRegisteredFontNames() else 'Helvetica'),
-        ]))
+        for label, value in stats:
+            pdf.set_font(font_name, 'B', 10)
+            pdf.cell(80, 8, label, 1, 0, 'L', True)
+            pdf.set_font(font_name, '', 10)
+            pdf.cell(0, 8, value, 1, 1, 'L', True)
         
-        story.append(Paragraph('Общая информация', heading_style))
-        story.append(summary_table)
-        story.append(Spacer(1, 20))
+        pdf.ln(10)
         
-        story.append(Paragraph('Анализ ИИ', heading_style))
-        story.append(Paragraph(req.ai_analysis, normal_style))
-        story.append(Spacer(1, 20))
+        pdf.set_font(font_name, 'B', 14)
+        pdf.set_text_color(124, 58, 237)
+        pdf.cell(0, 10, transliterate('Анализ ИИ'), 0, 1)
+        pdf.ln(3)
+        
+        pdf.set_font(font_name, '', 10)
+        pdf.set_text_color(50, 50, 50)
+        pdf.multi_cell(0, 6, transliterate(req.ai_analysis))
+        pdf.ln(10)
         
         if req.matches:
-            story.append(Paragraph('Найденные совпадения', heading_style))
+            pdf.set_font(font_name, 'B', 14)
+            pdf.set_text_color(124, 58, 237)
+            pdf.cell(0, 10, transliterate('Найденные совпадения'), 0, 1)
+            pdf.ln(5)
             
             for idx, match in enumerate(req.matches, 1):
-                match_data = [
-                    ['Источник', match.source],
-                    ['Совпадение', f'{match.similarity:.1f}%'],
-                    ['Фрагмент', match.excerpt]
-                ]
+                pdf.set_font(font_name, 'B', 11)
+                pdf.set_text_color(50, 50, 50)
+                pdf.cell(0, 8, transliterate(f'Совпадение #{idx}'), 0, 1)
                 
-                match_table = Table(match_data, colWidths=[4*cm, 12*cm])
-                match_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#E0E7FF')),
-                    ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#1E40AF')),
-                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                    ('FONTNAME', (0, 0), (0, -1), 'DejaVuSans-Bold' if 'DejaVuSans-Bold' in pdfmetrics.getRegisteredFontNames() else 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 10),
-                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.grey),
-                    ('FONTNAME', (1, 0), (1, -1), 'DejaVuSans' if 'DejaVuSans' in pdfmetrics.getRegisteredFontNames() else 'Helvetica'),
-                ]))
+                pdf.set_fill_color(224, 231, 255)
+                pdf.set_font(font_name, 'B', 9)
+                pdf.set_text_color(30, 64, 175)
+                pdf.cell(60, 6, transliterate('Источник:'), 1, 0, 'L', True)
+                pdf.set_font(font_name, '', 9)
+                pdf.set_text_color(50, 50, 50)
+                pdf.multi_cell(0, 6, transliterate(match.source), 1)
                 
-                story.append(Paragraph(f'Совпадение #{idx}', normal_style))
-                story.append(match_table)
-                story.append(Spacer(1, 15))
+                pdf.set_font(font_name, 'B', 9)
+                pdf.set_text_color(30, 64, 175)
+                pdf.cell(60, 6, transliterate('Совпадение:'), 1, 0, 'L', True)
+                pdf.set_font(font_name, '', 9)
+                pdf.set_text_color(50, 50, 50)
+                pdf.cell(0, 6, f'{match.similarity:.1f}%', 1, 1)
+                
+                pdf.set_font(font_name, 'B', 9)
+                pdf.set_text_color(30, 64, 175)
+                pdf.cell(60, 6, transliterate('Фрагмент:'), 1, 0, 'L', True)
+                pdf.set_font(font_name, '', 9)
+                pdf.set_text_color(50, 50, 50)
+                
+                y_before = pdf.get_y()
+                x_before = pdf.get_x()
+                pdf.multi_cell(0, 6, transliterate(match.excerpt), 1)
+                
+                pdf.ln(5)
         
-        story.append(PageBreak())
-        story.append(Paragraph('Проверенный текст', heading_style))
+        pdf.add_page()
+        pdf.set_font(font_name, 'B', 14)
+        pdf.set_text_color(124, 58, 237)
+        pdf.cell(0, 10, transliterate('Проверенный текст'), 0, 1)
+        pdf.ln(5)
         
-        text_paragraphs = req.text.split('\n')
-        for para in text_paragraphs:
-            if para.strip():
-                story.append(Paragraph(para, normal_style))
+        pdf.set_font(font_name, '', 10)
+        pdf.set_text_color(50, 50, 50)
+        pdf.multi_cell(0, 6, transliterate(req.text))
         
-        doc.build(story)
-        
-        pdf_bytes = buffer.getvalue()
-        buffer.close()
-        
+        pdf_output = pdf.output(dest='S')
+        if isinstance(pdf_output, str):
+            pdf_bytes = pdf_output.encode('latin1')
+        else:
+            pdf_bytes = bytes(pdf_output)
         pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
         
         return {
