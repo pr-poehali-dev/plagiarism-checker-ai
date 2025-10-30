@@ -1,0 +1,28 @@
+{
+  "tests": [
+    {
+      "name": "Generate PDF report",
+      "method": "POST",
+      "body": {
+        "text": "Тестовый текст для проверки генерации PDF отчета.",
+        "uniqueness": 92.5,
+        "words": 7,
+        "characters": 52,
+        "matches": [
+          {
+            "source": "example.com",
+            "similarity": 5.2,
+            "excerpt": "Небольшое совпадение"
+          }
+        ],
+        "ai_analysis": "Текст демонстрирует высокую уникальность."
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "pdf": "string",
+        "filename": "string"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}

@@ -5,26 +5,124 @@ import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import Icon from '@/components/ui/icon';
+import { useToast } from '@/hooks/use-toast';
+
+const CHECK_API_URL = 'https://functions.poehali.dev/de69dca0-423a-453c-8924-caa38d834c96';
+const PDF_API_URL = 'https://functions.poehali.dev/e0bf7132-3c8a-4a86-b560-9cadd215f69c';
+
+interface Match {
+  source: string;
+  similarity: number;
+  excerpt: string;
+}
+
+interface UniquenessResult {
+  uniqueness: number;
+  words: number;
+  characters: number;
+  matches: Match[];
+  ai_analysis: string;
+}
 
 export default function Index() {
   const [text, setText] = useState('');
   const [isChecking, setIsChecking] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<UniquenessResult | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const { toast } = useToast();
 
   const handleCheck = async () => {
-    setIsChecking(true);
-    setTimeout(() => {
-      setResult({
-        uniqueness: 87,
-        words: text.split(' ').length,
-        characters: text.length,
-        matches: [
-          { source: 'wikipedia.org', similarity: 15, text: 'Частичное совпадение с материалами энциклопедии...' },
-          { source: 'medium.com', similarity: 8, text: 'Небольшое совпадение с блоговыми материалами...' }
-        ]
+    if (text.length < 10) {
+      toast({
+        title: 'Ошибка',
+        description: 'Текст слишком короткий (минимум 10 символов)',
+        variant: 'destructive'
       });
+      return;
+    }
+
+    setIsChecking(true);
+    setResult(null);
+
+    try {
+      const response = await fetch(CHECK_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text })
+      });
+
+      if (!response.ok) {
+        throw new Error('Ошибка при проверке текста');
+      }
+
+      const data: UniquenessResult = await response.json();
+      setResult(data);
+      
+      toast({
+        title: 'Готово!',
+        description: 'Анализ текста завершен',
+      });
+    } catch (error) {
+      console.error('Error checking text:', error);
+      toast({
+        title: 'Ошибка',
+        description: 'Не удалось проверить текст. Попробуйте позже.',
+        variant: 'destructive'
+      });
+    } finally {
       setIsChecking(false);
-    }, 2000);
+    }
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!result) return;
+
+    setIsDownloading(true);
+
+    try {
+      const response = await fetch(PDF_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text,
+          uniqueness: result.uniqueness,
+          words: result.words,
+          characters: result.characters,
+          matches: result.matches,
+          ai_analysis: result.ai_analysis
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Ошибка при генерации PDF');
+      }
+
+      const data = await response.json();
+      
+      const linkSource = `data:application/pdf;base64,${data.pdf}`;
+      const downloadLink = document.createElement('a');
+      downloadLink.href = linkSource;
+      downloadLink.download = data.filename;
+      downloadLink.click();
+
+      toast({
+        title: 'Готово!',
+        description: 'PDF отчет успешно скачан',
+      });
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast({
+        title: 'Ошибка',
+        description: 'Не удалось создать PDF отчет',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   return (
@@ -131,10 +229,10 @@ export default function Index() {
             <Card className="p-8 mt-8 animate-fade-in">
               <div className="text-center mb-8">
                 <div className="inline-flex items-center justify-center w-32 h-32 rounded-full bg-gradient-primary mb-4 glow-effect">
-                  <span className="text-5xl font-heading font-bold text-white">{result.uniqueness}%</span>
+                  <span className="text-5xl font-heading font-bold text-white">{result.uniqueness.toFixed(1)}%</span>
                 </div>
                 <h3 className="text-2xl font-heading font-bold mb-2">Уникальность текста</h3>
-                <p className="text-muted-foreground">Анализ завершен успешно</p>
+                <p className="text-muted-foreground">{result.ai_analysis}</p>
               </div>
 
               <div className="grid md:grid-cols-3 gap-4 mb-8">
@@ -180,7 +278,7 @@ export default function Index() {
                           </a>
                           <span className="text-sm text-muted-foreground">{match.similarity}% совпадение</span>
                         </div>
-                        <p className="text-sm text-muted-foreground">{match.text}</p>
+                        <p className="text-sm text-muted-foreground">{match.excerpt}</p>
                         <Progress value={match.similarity} className="mt-2 h-1" />
                       </div>
                     </div>
@@ -189,9 +287,23 @@ export default function Index() {
               </div>
 
               <div className="flex gap-4 flex-wrap">
-                <Button className="gradient-primary flex-1 min-w-[200px]" size="lg">
-                  <Icon name="Download" size={20} className="mr-2" />
-                  Скачать PDF отчет
+                <Button 
+                  className="gradient-primary flex-1 min-w-[200px]" 
+                  size="lg"
+                  onClick={handleDownloadPDF}
+                  disabled={isDownloading}
+                >
+                  {isDownloading ? (
+                    <>
+                      <Icon name="Loader2" className="mr-2 animate-spin" size={20} />
+                      Создаем PDF...
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="Download" size={20} className="mr-2" />
+                      Скачать PDF отчет
+                    </>
+                  )}
                 </Button>
                 <Button variant="outline" size="lg">
                   <Icon name="Share2" size={20} className="mr-2" />

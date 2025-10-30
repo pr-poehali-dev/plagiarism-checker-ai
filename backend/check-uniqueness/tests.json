@@ -1,0 +1,20 @@
+{
+  "tests": [
+    {
+      "name": "Check text uniqueness",
+      "method": "POST",
+      "body": {
+        "text": "Искусственный интеллект меняет мир вокруг нас. Современные технологии машинного обучения позволяют создавать системы, способные анализировать текст, распознавать изображения и принимать решения."
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "uniqueness": "number",
+        "words": "number",
+        "characters": "number",
+        "matches": "array",
+        "ai_analysis": "string"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
