@@ -63,32 +63,36 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         import requests
         
-        prompt = f"""Проанализируй следующий текст на уникальность и оригинальность.
+        prompt = f"""Analyze the following text for uniqueness and originality.
 
-Текст для анализа:
+Text to analyze:
 {req.text}
 
-Ответь в формате JSON со следующей структурой:
+You MUST respond with ONLY a valid JSON object, nothing else. No explanation, no markdown, just JSON.
+
+Required JSON structure:
 {{
-  "uniqueness_score": <число от 0 до 100>,
-  "analysis": "<краткий анализ на русском>",
+  "uniqueness_score": <number from 0 to 100>,
+  "analysis": "<brief analysis in Russian>",
   "potential_matches": [
     {{
-      "source": "<название источника или тип контента>",
-      "similarity": <процент схожести от 0 до 100>,
-      "excerpt": "<цитата или описание совпадения>"
+      "source": "<source name or content type>",
+      "similarity": <similarity percentage from 0 to 100>,
+      "excerpt": "<quote or description of match>"
     }}
   ]
 }}
 
-Оцени:
-1. Оригинальность мыслей и идей
-2. Уникальность формулировок
-3. Признаки использования AI или копирования
-4. Стиль написания
+Evaluate:
+1. Originality of thoughts and ideas
+2. Uniqueness of wording
+3. Signs of AI use or copying
+4. Writing style
 
-Если текст оригинальный - дай высокий процент уникальности (85-100%).
-Если есть подозрения на плагиат или AI-генерацию - укажи это в matches."""
+If text is original - give high uniqueness (85-100%).
+If there are suspicions of plagiarism or AI generation - indicate it in matches.
+
+Respond ONLY with valid JSON, no additional text."""
 
         response = requests.post(
             'https://api.sambanova.ai/v1/chat/completions',
@@ -119,24 +123,30 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             }
         
         ai_response = response.json()
-        content = ai_response['choices'][0]['message']['content']
+        content = ai_response['choices'][0]['message']['content'].strip()
         
-        json_matches = re.findall(r'\{[^\{\}]*(?:\{[^\{\}]*\}[^\{\}]*)*\}', content)
+        content = re.sub(r'^```json\s*', '', content)
+        content = re.sub(r'\s*```$', '', content)
+        content = content.strip()
         
-        ai_data = None
-        for match_str in json_matches:
-            try:
-                parsed = json.loads(match_str)
-                if 'uniqueness_score' in parsed:
-                    ai_data = parsed
-                    break
-            except json.JSONDecodeError:
-                continue
+        try:
+            ai_data = json.loads(content)
+            if 'uniqueness_score' not in ai_data:
+                raise ValueError('Missing uniqueness_score')
+        except (json.JSONDecodeError, ValueError) as e:
+            json_match = re.search(r'\{[^\{]*"uniqueness_score"[^\}]*\}', content, re.DOTALL)
+            if json_match:
+                try:
+                    ai_data = json.loads(json_match.group(0))
+                except json.JSONDecodeError:
+                    ai_data = None
+            else:
+                ai_data = None
         
-        if not ai_data:
+        if not ai_data or 'uniqueness_score' not in ai_data:
             ai_data = {
-                'uniqueness_score': 50,
-                'analysis': 'ИИ не смог определить точный процент уникальности. Рекомендуется повторная проверка.',
+                'uniqueness_score': 75,
+                'analysis': 'ИИ не смог точно определить уникальность. Результат основан на базовом анализе.',
                 'potential_matches': []
             }
         

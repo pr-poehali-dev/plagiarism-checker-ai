@@ -98,10 +98,18 @@ export default function Index() {
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('HTTP', response.status, ':', PDF_API_URL);
+        console.error('Response:', errorText);
         throw new Error('Ошибка при генерации PDF');
       }
 
       const data = await response.json();
+      
+      if (!data.pdf) {
+        console.error('No PDF in response:', data);
+        throw new Error('Пустой ответ от сервера');
+      }
       
       const linkSource = `data:application/pdf;base64,${data.pdf}`;
       const downloadLink = document.createElement('a');
